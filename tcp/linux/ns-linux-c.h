@@ -127,12 +127,12 @@ extern void record_linux_param_description(const char*, const char*, const char*
 #define kstrdup(str, mode) strdup(str)
 
 ////////////For delay based protocols:
-struct tcpvegas_info {
-	__u32	tcpv_enabled;
-	__u32	tcpv_rttcnt;
-	__u32	tcpv_rtt;
-	__u32	tcpv_minrtt;
-};
+// struct tcpvegas_info {
+// 	__u32	tcpv_enabled;
+// 	__u32	tcpv_rttcnt;
+// 	__u32	tcpv_rtt;
+// 	__u32	tcpv_minrtt;
+// };
 #define INET_DIAG_VEGASINFO 1
 struct rtattr {};
 #define __RTA_PUT(skb, INFO_FLAG, size) NULL

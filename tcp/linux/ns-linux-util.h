@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "ns-linux-param.h"
+#include <stdbool.h>
 
 extern struct tcp_congestion_ops tcp_reno;
 
@@ -29,6 +30,8 @@ extern long long ktime_get_real;
 #define JIFFY_RATIO 1000
 #define US_RATIO 1000000
 #define MS_RATIO 1000
+
+#define tcp_jiffies32 ((u32)jiffies)
 
 #define jiffies_to_usecs(x) ((US_RATIO/JIFFY_RATIO)*(x))
 #define msecs_to_jiffies(x) ((JIFFY_RATIO/MS_RATIO)*(x))
@@ -48,6 +51,9 @@ extern void tcp_cong_avoid_register(void);
 #define s32 long
 #define s64 long long
 
+#define __be16 __u16
+#define __be32 __u32
+
 #define ktime_t s64
 extern ktime_t net_invalid_timestamp();
 extern int ktime_equal(const ktime_t cmp1, const ktime_t cmp2);
@@ -58,6 +64,221 @@ extern ktime_t net_timedelta(ktime_t t);
 #define tcp_sk(sk) (sk)
 #define inet_csk_ca(sk) (void*)((sk)->icsk_ca_priv)
 
+#define TCP_INFINITE_SSTHRESH	0x7fffffff
+
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+#ifndef _UAPI_INET_DIAG_H_
+#define _UAPI_INET_DIAG_H_
+
+
+/* Just some random number */
+#define TCPDIAG_GETSOCK 18
+#define DCCPDIAG_GETSOCK 19
+
+#define INET_DIAG_GETSOCK_MAX 24
+
+/* Socket identity */
+struct inet_diag_sockid {
+	__be16	idiag_sport;
+	__be16	idiag_dport;
+	__be32	idiag_src[4];
+	__be32	idiag_dst[4];
+	__u32	idiag_if;
+	__u32	idiag_cookie[2];
+#define INET_DIAG_NOCOOKIE (~0U)
+};
+
+/* Request structure */
+
+struct inet_diag_req {
+	__u8	idiag_family;		/* Family of addresses. */
+	__u8	idiag_src_len;
+	__u8	idiag_dst_len;
+	__u8	idiag_ext;		/* Query extended information */
+
+	struct inet_diag_sockid id;
+
+	__u32	idiag_states;		/* States to dump */
+	__u32	idiag_dbs;		/* Tables to dump (NI) */
+};
+
+struct inet_diag_req_v2 {
+	__u8	sdiag_family;
+	__u8	sdiag_protocol;
+	__u8	idiag_ext;
+	__u8	pad;
+	__u32	idiag_states;
+	struct inet_diag_sockid id;
+};
+
+/*
+ * SOCK_RAW sockets require the underlied protocol to be
+ * additionally specified so we can use @pad member for
+ * this, but we can't rename it because userspace programs
+ * still may depend on this name. Instead lets use another
+ * structure definition as an alias for struct
+ * @inet_diag_req_v2.
+ */
+struct inet_diag_req_raw {
+	__u8	sdiag_family;
+	__u8	sdiag_protocol;
+	__u8	idiag_ext;
+	__u8	sdiag_raw_protocol;
+	__u32	idiag_states;
+	struct inet_diag_sockid id;
+};
+
+enum {
+	INET_DIAG_REQ_NONE,
+	INET_DIAG_REQ_BYTECODE,
+};
+
+#define INET_DIAG_REQ_MAX INET_DIAG_REQ_BYTECODE
+
+/* Bytecode is sequence of 4 byte commands followed by variable arguments.
+ * All the commands identified by "code" are conditional jumps forward:
+ * to offset cc+"yes" or to offset cc+"no". "yes" is supposed to be
+ * length of the command and its arguments.
+ */
+ 
+struct inet_diag_bc_op {
+	unsigned char	code;
+	unsigned char	yes;
+	unsigned short	no;
+};
+
+enum {
+	INET_DIAG_BC_NOP,
+	INET_DIAG_BC_JMP,
+	INET_DIAG_BC_S_GE,
+	INET_DIAG_BC_S_LE,
+	INET_DIAG_BC_D_GE,
+	INET_DIAG_BC_D_LE,
+	INET_DIAG_BC_AUTO,
+	INET_DIAG_BC_S_COND,
+	INET_DIAG_BC_D_COND,
+	INET_DIAG_BC_DEV_COND,   /* u32 ifindex */
+	INET_DIAG_BC_MARK_COND,
+	INET_DIAG_BC_S_EQ,
+	INET_DIAG_BC_D_EQ,
+};
+
+struct inet_diag_hostcond {
+	__u8	family;
+	__u8	prefix_len;
+	int	port;
+	__be32	addr[0];
+};
+
+struct inet_diag_markcond {
+	__u32 mark;
+	__u32 mask;
+};
+
+/* Base info structure. It contains socket identity (addrs/ports/cookie)
+ * and, alas, the information shown by netstat. */
+struct inet_diag_msg {
+	__u8	idiag_family;
+	__u8	idiag_state;
+	__u8	idiag_timer;
+	__u8	idiag_retrans;
+
+	struct inet_diag_sockid id;
+
+	__u32	idiag_expires;
+	__u32	idiag_rqueue;
+	__u32	idiag_wqueue;
+	__u32	idiag_uid;
+	__u32	idiag_inode;
+};
+
+/* Extensions */
+
+enum {
+	INET_DIAG_NONE,
+	INET_DIAG_MEMINFO,
+	INET_DIAG_INFO,
+	INET_DIAG_VEGASINFO,
+	INET_DIAG_CONG,
+	INET_DIAG_TOS,
+	INET_DIAG_TCLASS,
+	INET_DIAG_SKMEMINFO,
+	INET_DIAG_SHUTDOWN,
+
+	/*
+	 * Next extenstions cannot be requested in struct inet_diag_req_v2:
+	 * its field idiag_ext has only 8 bits.
+	 */
+
+	INET_DIAG_DCTCPINFO,	/* request as INET_DIAG_VEGASINFO */
+	INET_DIAG_PROTOCOL,	/* response attribute only */
+	INET_DIAG_SKV6ONLY,
+	INET_DIAG_LOCALS,
+	INET_DIAG_PEERS,
+	INET_DIAG_PAD,
+	INET_DIAG_MARK,		/* only with CAP_NET_ADMIN */
+	INET_DIAG_BBRINFO,	/* request as INET_DIAG_VEGASINFO */
+	INET_DIAG_CLASS_ID,	/* request as INET_DIAG_TCLASS */
+	INET_DIAG_MD5SIG,
+	INET_DIAG_ULP_INFO,
+	__INET_DIAG_MAX,
+};
+
+#define INET_DIAG_MAX (__INET_DIAG_MAX - 1)
+
+enum {
+	INET_ULP_INFO_UNSPEC,
+	INET_ULP_INFO_NAME,
+	INET_ULP_INFO_TLS,
+	__INET_ULP_INFO_MAX,
+};
+#define INET_ULP_INFO_MAX (__INET_ULP_INFO_MAX - 1)
+
+/* INET_DIAG_MEM */
+
+struct inet_diag_meminfo {
+	__u32	idiag_rmem;
+	__u32	idiag_wmem;
+	__u32	idiag_fmem;
+	__u32	idiag_tmem;
+};
+
+/* INET_DIAG_VEGASINFO */
+
+struct tcpvegas_info {
+	__u32	tcpv_enabled;
+	__u32	tcpv_rttcnt;
+	__u32	tcpv_rtt;
+	__u32	tcpv_minrtt;
+};
+
+/* INET_DIAG_DCTCPINFO */
+
+struct tcp_dctcp_info {
+	__u16	dctcp_enabled;
+	__u16	dctcp_ce_state;
+	__u32	dctcp_alpha;
+	__u32	dctcp_ab_ecn;
+	__u32	dctcp_ab_tot;
+};
+
+/* INET_DIAG_BBRINFO */
+
+struct tcp_bbr_info {
+	/* u64 bw: max-filtered BW (app throughput) estimate in Byte per sec: */
+	__u32	bbr_bw_lo;		/* lower 32 bits of bw */
+	__u32	bbr_bw_hi;		/* upper 32 bits of bw */
+	__u32	bbr_min_rtt;		/* min-filtered RTT in uSec */
+	__u32	bbr_pacing_gain;	/* pacing gain shifted left 8 bits */
+	__u32	bbr_cwnd_gain;		/* cwnd gain shifted left 8 bits */
+};
+
+union tcp_cc_info {
+	struct tcpvegas_info	vegas;
+	struct tcp_dctcp_info	dctcp;
+	struct tcp_bbr_info	bbr;
+};
+#endif /* _UAPI_INET_DIAG_H_ */
 
 //from kernel.h
 #define min_t(type,x,y) \
@@ -66,6 +287,20 @@ extern ktime_t net_timedelta(ktime_t t);
 #define max_t(type,x,y) \
 	(((type)(x)) > ((type)(y)) ? ((type)(x)): ((type)(y)))
 
+// from time64.h
+/* Parameters used to convert the timespec values: */
+#define MSEC_PER_SEC	1000L
+#define USEC_PER_MSEC	1000L
+#define NSEC_PER_USEC	1000L
+#define NSEC_PER_MSEC	1000000L
+#define USEC_PER_SEC	1000000L
+#define NSEC_PER_SEC	1000000000L
+#define FSEC_PER_SEC	1000000000000000LL
+
+/* Located here for timespec[64]_valid_strict */
+#define TIME64_MAX			((s64)~((u64)1 << 63))
+#define KTIME_MAX			((s64)~((u64)1 << 63))
+#define KTIME_SEC_MAX			(KTIME_MAX / NSEC_PER_SEC)
 
 //#define max(x,y) ((x>y)? x:y)
 
@@ -173,6 +408,14 @@ struct tcp_congestion_ops {
 	void (*pkts_acked)(struct sock *sk, u32 num_acked, ktime_t last);
 	/* get info for inet_diag (optional) */
 	void (*get_info)(struct sock *sk, u32 ext, struct sk_buff *skb);
+	/* call when packets are delivered to update cwnd and pacing rate,
+	 * after all the ca_state processing. (optional)
+	 */
+	void (*cong_control)(struct sock *sk, const struct rate_sample *rs);
+	/* returns the multiplier used in tcp_sndbuf_expand (optional) */
+	u32 (*sndbuf_expand)(struct sock *sk);
+	/* override sysctl_tcp_min_tso_segs */
+	u32 (*min_tso_segs)(struct sock *sk);
 
 	char 		name[TCP_CA_NAME_MAX];
 	struct module 	*owner;
@@ -251,7 +494,13 @@ struct tcp_sock {
 //	__u8	keepalive_probes; /* num of allowed keep alive probes	*/
 
 /* RTT measurement */
-	__u32	srtt;		/* smoothed round trip time << 3	*/
+u64	tcp_mstamp;	/* most recent packet received/sent */
+u32	srtt_us;	/* smoothed round trip time << 3 in usecs */
+u32	mdev_us;	/* medium deviation			*/
+u32	mdev_max_us;	/* maximal mdev for the last rtt period	*/
+u32	rttvar_us;	/* smoothed mdev_max			*/
+u32	rtt_seq;	/* sequence number to update rttvar	*/
+//	__u32	srtt_us;		/* smoothed round trip time << 3	*/
 //	__u32	mdev;		/* medium deviation			*/
 //	__u32	mdev_max;	/* maximal mdev for the last rtt period	*/
 //	__u32	rttvar;		/* smoothed mdev_max			*/
@@ -275,6 +524,21 @@ struct tcp_sock {
 //	__u32	snd_cwnd_used;
 	__u32	snd_cwnd_stamp;
 	__u32	bytes_acked;
+	u32	lost;		/* Total data packets lost incl. rexmits */
+	u32	app_limited;	/* limited until "delivered" reaches this val */
+	u64	first_tx_mstamp;  /* start of window send phase */
+	u64	delivered_mstamp; /* time we reached "delivered" */
+	u32			sk_pacing_status; /* see enum sk_pacing */
+	unsigned long		sk_pacing_rate; /* bytes per second */
+	unsigned long		sk_max_pacing_rate;
+	u8			sk_pacing_shift;
+	u32	delivered;	/* Total data packets delivered incl. rexmits */
+
+	u64	tcp_wstamp_ns;	/* departure time for next sent data packet */
+	u64	tcp_clock_cache; /* cache last tcp_clock_ns() (see tcp_mstamp_refresh()) */
+
+
+
 //
 //	struct sk_buff_head	out_of_order_queue; /* Out of order segments go here */
 //
@@ -339,8 +603,165 @@ struct sk_buff {
 
 };
 
+// SPDX-License-Identifier: GPL-2.0
+/**
+ * lib/minmax.c: windowed min/max tracker
+ *
+ * Kathleen Nichols' algorithm for tracking the minimum (or maximum)
+ * value of a data stream over some fixed time interval.  (E.g.,
+ * the minimum RTT over the past five minutes.) It uses constant
+ * space and constant time per update yet almost always delivers
+ * the same minimum as an implementation that has to keep all the
+ * data in the window.
+ *
+ * The algorithm keeps track of the best, 2nd best & 3rd best min
+ * values, maintaining an invariant that the measurement time of
+ * the n'th best >= n-1'th best. It also makes sure that the three
+ * values are widely separated in the time window since that bounds
+ * the worse case error when that data is monotonically increasing
+ * over the window.
+ *
+ * Upon getting a new min, we can forget everything earlier because
+ * it has no value - the new min is <= everything else in the window
+ * by definition and it's the most recent. So we restart fresh on
+ * every new min and overwrites 2nd & 3rd choices. The same property
+ * holds for 2nd & 3rd best.
+ */
+/* SPDX-License-Identifier: GPL-2.0 */
+/**
+ * lib/minmax.c: windowed min/max tracker by Kathleen Nichols.
+ *
+ */
+
+#ifndef MINMAX_H
+#define MINMAX_H
+
+
+/* A single data point for our parameterized min-max tracker */
+struct minmax_sample {
+	u32	t;	/* time measurement was taken */
+	u32	v;	/* value measured */
+};
+
+/* State for the parameterized min-max tracker */
+struct minmax {
+	struct minmax_sample s[3];
+};
+
+static inline u32 minmax_get(const struct minmax *m)
+{
+	return m->s[0].v;
+}
+
+static inline u32 minmax_reset(struct minmax *m, u32 t, u32 meas)
+{
+	struct minmax_sample val = { .t = t, .v = meas };
+
+	m->s[2] = m->s[1] = m->s[0] = val;
+	return m->s[0].v;
+}
+
+u32 minmax_running_max(struct minmax *m, u32 win, u32 t, u32 meas);
+u32 minmax_running_min(struct minmax *m, u32 win, u32 t, u32 meas);
+
+#endif
+
+/* As time advances, update the 1st, 2nd, and 3rd choices. */
+static u32 minmax_subwin_update(struct minmax *m, u32 win,
+				const struct minmax_sample *val)
+{
+	u32 dt = val->t - m->s[0].t;
+
+	if (unlikely(dt > win)) {
+		/*
+		 * Passed entire window without a new val so make 2nd
+		 * choice the new val & 3rd choice the new 2nd choice.
+		 * we may have to iterate this since our 2nd choice
+		 * may also be outside the window (we checked on entry
+		 * that the third choice was in the window).
+		 */
+		m->s[0] = m->s[1];
+		m->s[1] = m->s[2];
+		m->s[2] = *val;
+		if (unlikely(val->t - m->s[0].t > win)) {
+			m->s[0] = m->s[1];
+			m->s[1] = m->s[2];
+			m->s[2] = *val;
+		}
+	} else if (unlikely(m->s[1].t == m->s[0].t) && dt > win/4) {
+		/*
+		 * We've passed a quarter of the window without a new val
+		 * so take a 2nd choice from the 2nd quarter of the window.
+		 */
+		m->s[2] = m->s[1] = *val;
+	} else if (unlikely(m->s[2].t == m->s[1].t) && dt > win/2) {
+		/*
+		 * We've passed half the window without finding a new val
+		 * so take a 3rd choice from the last half of the window
+		 */
+		m->s[2] = *val;
+	}
+	return m->s[0].v;
+}
+
+/* Check if new measurement updates the 1st, 2nd or 3rd choice max. */
+u32 minmax_running_max(struct minmax *m, u32 win, u32 t, u32 meas)
+{
+	struct minmax_sample val = { .t = t, .v = meas };
+
+	if (unlikely(val.v >= m->s[0].v) ||	  /* found new max? */
+	    unlikely(val.t - m->s[2].t > win))	  /* nothing left in window? */
+		return minmax_reset(m, t, meas);  /* forget earlier samples */
+
+	if (unlikely(val.v >= m->s[1].v))
+		m->s[2] = m->s[1] = val;
+	else if (unlikely(val.v >= m->s[2].v))
+		m->s[2] = val;
+
+	return minmax_subwin_update(m, win, &val);
+}
+EXPORT_SYMBOL(minmax_running_max);
+
+/* Check if new measurement updates the 1st, 2nd or 3rd choice min. */
+u32 minmax_running_min(struct minmax *m, u32 win, u32 t, u32 meas)
+{
+	struct minmax_sample val = { .t = t, .v = meas };
+
+	if (unlikely(val.v <= m->s[0].v) ||	  /* found new min? */
+	    unlikely(val.t - m->s[2].t > win))	  /* nothing left in window? */
+		return minmax_reset(m, t, meas);  /* forget earlier samples */
+
+	if (unlikely(val.v <= m->s[1].v))
+		m->s[2] = m->s[1] = val;
+	else if (unlikely(val.v <= m->s[2].v))
+		m->s[2] = val;
+
+	return minmax_subwin_update(m, win, &val);
+}
+
 extern struct tcp_congestion_ops tcp_init_congestion_ops;
 
+struct rate_sample {
+	u64  prior_mstamp; /* starting timestamp for interval */
+	u32  prior_delivered;	/* tp->delivered at "prior_mstamp" */
+	s32  delivered;		/* number of packets delivered over interval */
+	long interval_us;	/* time for tp->delivered to incr "delivered" */
+	u32 snd_interval_us;	/* snd interval for delivered packets */
+	u32 rcv_interval_us;	/* rcv interval for delivered packets */
+	long rtt_us;		/* RTT of last (S)ACKed packet (or -1) */
+	int  losses;		/* number of packets marked lost upon ACK */
+	u32  acked_sacked;	/* number of packets newly (S)ACKed upon ACK */
+	u32  prior_in_flight;	/* in flight before this ACK */
+	bool is_app_limited;	/* is sample from packet with bubble in pipe? */
+	bool is_retrans;	/* is sample from retransmission? */
+	bool is_ack_delayed;	/* is this (likely) a delayed ACK? */
+};
+
+enum sk_pacing {
+	SK_PACING_NONE		= 0,
+	SK_PACING_NEEDED	= 1,
+	SK_PACING_FQ		= 2,
+};
 
 enum tcp_ca_state
 {
@@ -356,6 +777,12 @@ enum tcp_ca_state
 #define TCPF_CA_Loss	(1<<TCP_CA_Loss)
 };
 
+#define GSO_MAX_SIZE		65536
+	unsigned int		gso_max_size;
+#define GSO_MAX_SEGS		65535
+	u16			gso_max_segs;
+#define MAX_HEADER 128
+
 #define FLAG_ECE 1
 #define FLAG_DATA_SACKED 2
 #define FLAG_DATA_ACKED 4
@@ -367,5 +794,193 @@ enum tcp_ca_state
 
 #define CONFIG_DEFAULT_TCP_CONG "reno"
 #define TCP_CLOSE 0
+
+#define MAX_TCP_HEADER	(128 + MAX_HEADER)
+#define MAX_TCP_OPTION_SPACE 40
+#define TCP_MIN_SND_MSS		48
+#define TCP_MIN_GSO_SIZE	(TCP_MIN_SND_MSS - MAX_TCP_OPTION_SPACE)
+
+/*
+ * Never offer a window over 32767 without using window scaling. Some
+ * poor stacks do signed 16bit maths!
+ */
+#define MAX_TCP_WINDOW		32767U
+
+/* Minimal accepted MSS. It is (60+60+8) - (20+20). */
+#define TCP_MIN_MSS		88U
+
+/* The initial MTU to use for probing */
+#define TCP_BASE_MSS		1024
+
+/* probing interval, default to 10 minutes as per RFC4821 */
+#define TCP_PROBE_INTERVAL	600
+
+/* Specify interval when tcp mtu probing will stop */
+#define TCP_PROBE_THRESHOLD	8
+
+/* After receiving this amount of duplicate ACKs fast retransmit starts. */
+#define TCP_FASTRETRANS_THRESH 3
+
+/* Maximal number of ACKs sent quickly to accelerate slow-start. */
+#define TCP_MAX_QUICKACKS	16U
+
+/* Maximal number of window scale according to RFC1323 */
+#define TCP_MAX_WSCALE		14U
+
+/* urg_data states */
+#define TCP_URG_VALID	0x0100
+#define TCP_URG_NOTYET	0x0200
+#define TCP_URG_READ	0x0400
+
+#define TCP_RETR1	3	/*
+				 * This is how many retries it does before it
+				 * tries to figure out if the gateway is
+				 * down. Minimal RFC value is 3; it corresponds
+				 * to ~3sec-8min depending on RTO.
+				 */
+
+#define TCP_RETR2	15	/*
+				 * This should take at least
+				 * 90 minutes to time out.
+				 * RFC1122 says that the limit is 100 sec.
+				 * 15 is ~13-30min depending on RTO.
+				 */
+
+#define TCP_SYN_RETRIES	 6	/* This is how many retries are done
+				 * when active opening a connection.
+				 * RFC1122 says the minimum retry MUST
+				 * be at least 180secs.  Nevertheless
+				 * this value is corresponding to
+				 * 63secs of retransmission with the
+				 * current initial RTO.
+				 */
+
+#define TCP_SYNACK_RETRIES 5	/* This is how may retries are done
+				 * when passive opening a connection.
+				 * This is corresponding to 31secs of
+				 * retransmission with the current
+				 * initial RTO.
+				 */
+
+#define TCP_TIMEWAIT_LEN (60*HZ) /* how long to wait to destroy TIME-WAIT
+				  * state, about 60 seconds	*/
+#define TCP_FIN_TIMEOUT	TCP_TIMEWAIT_LEN
+                                 /* BSD style FIN_WAIT2 deadlock breaker.
+				  * It used to be 3min, new value is 60sec,
+				  * to combine FIN-WAIT-2 timeout with
+				  * TIME-WAIT timer.
+				  */
+
+#define TCP_DELACK_MAX	((unsigned)(HZ/5))	/* maximal time to delay before sending an ACK */
+#if HZ >= 100
+#define TCP_DELACK_MIN	((unsigned)(HZ/25))	/* minimal time to delay before sending an ACK */
+#define TCP_ATO_MIN	((unsigned)(HZ/25))
+#else
+#define TCP_DELACK_MIN	4U
+#define TCP_ATO_MIN	4U
+#endif
+#define TCP_RTO_MAX	((unsigned)(120*HZ))
+#define TCP_RTO_MIN	((unsigned)(HZ/5))
+#define TCP_TIMEOUT_MIN	(2U) /* Min timeout for TCP timers in jiffies */
+#define TCP_TIMEOUT_INIT ((unsigned)(1*HZ))	/* RFC6298 2.1 initial RTO value	*/
+#define TCP_TIMEOUT_FALLBACK ((unsigned)(3*HZ))	/* RFC 1122 initial RTO value, now
+						 * used as a fallback RTO for the
+						 * initial data transmission if no
+						 * valid RTT sample has been acquired,
+						 * most likely due to retrans in 3WHS.
+						 */
+
+#define TCP_RESOURCE_PROBE_INTERVAL ((unsigned)(HZ/2U)) /* Maximal interval between probes
+					                 * for local resources.
+					                 */
+#define TCP_KEEPALIVE_TIME	(120*60*HZ)	/* two hours */
+#define TCP_KEEPALIVE_PROBES	9		/* Max of 9 keepalive probes	*/
+#define TCP_KEEPALIVE_INTVL	(75*HZ)
+
+#define MAX_TCP_KEEPIDLE	32767
+#define MAX_TCP_KEEPINTVL	32767
+#define MAX_TCP_KEEPCNT		127
+#define MAX_TCP_SYNCNT		127
+
+#define TCP_SYNQ_INTERVAL	(HZ/5)	/* Period of SYNACK timer */
+
+#define TCP_PAWS_24DAYS	(60 * 60 * 24 * 24)
+#define TCP_PAWS_MSL	60		/* Per-host timestamps are invalidated
+					 * after this time. It should be equal
+					 * (or greater than) TCP_TIMEWAIT_LEN
+					 * to provide reliability equal to one
+					 * provided by timewait state.
+					 */
+#define TCP_PAWS_WINDOW	1		/* Replay window for per-host
+					 * timestamps. It must be less than
+					 * minimal timewait lifetime.
+					 */
+/*
+ *	TCP option
+ */
+
+#define TCPOPT_NOP		1	/* Padding */
+#define TCPOPT_EOL		0	/* End of options */
+#define TCPOPT_MSS		2	/* Segment size negotiating */
+#define TCPOPT_WINDOW		3	/* Window scaling */
+#define TCPOPT_SACK_PERM        4       /* SACK Permitted */
+#define TCPOPT_SACK             5       /* SACK Block */
+#define TCPOPT_TIMESTAMP	8	/* Better RTT estimations/PAWS */
+#define TCPOPT_MD5SIG		19	/* MD5 Signature (RFC2385) */
+#define TCPOPT_FASTOPEN		34	/* Fast open (RFC7413) */
+#define TCPOPT_EXP		254	/* Experimental */
+/* Magic number to be after the option value for sharing TCP
+ * experimental options. See draft-ietf-tcpm-experimental-options-00.txt
+ */
+#define TCPOPT_FASTOPEN_MAGIC	0xF989
+#define TCPOPT_SMC_MAGIC	0xE2D4C3D9
+
+/*
+ *     TCP option lengths
+ */
+
+#define TCPOLEN_MSS            4
+#define TCPOLEN_WINDOW         3
+#define TCPOLEN_SACK_PERM      2
+#define TCPOLEN_TIMESTAMP      10
+#define TCPOLEN_MD5SIG         18
+#define TCPOLEN_FASTOPEN_BASE  2
+#define TCPOLEN_EXP_FASTOPEN_BASE  4
+#define TCPOLEN_EXP_SMC_BASE   6
+
+/* But this is what stacks really send out. */
+#define TCPOLEN_TSTAMP_ALIGNED		12
+#define TCPOLEN_WSCALE_ALIGNED		4
+#define TCPOLEN_SACKPERM_ALIGNED	4
+#define TCPOLEN_SACK_BASE		2
+#define TCPOLEN_SACK_BASE_ALIGNED	4
+#define TCPOLEN_SACK_PERBLOCK		8
+#define TCPOLEN_MD5SIG_ALIGNED		20
+#define TCPOLEN_MSS_ALIGNED		4
+#define TCPOLEN_EXP_SMC_BASE_ALIGNED	8
+
+/* Flags in tp->nonagle */
+#define TCP_NAGLE_OFF		1	/* Nagle's algo is disabled */
+#define TCP_NAGLE_CORK		2	/* Socket is corked	    */
+#define TCP_NAGLE_PUSH		4	/* Cork is overridden for already queued data */
+
+/* TCP thin-stream limits */
+#define TCP_THIN_LINEAR_RETRIES 6       /* After 6 linear retries, do exp. backoff */
+
+/* TCP initial congestion window as per rfc6928 */
+#define TCP_INIT_CWND		10
+
+/* Bit Flags for sysctl_tcp_fastopen */
+#define	TFO_CLIENT_ENABLE	1
+#define	TFO_SERVER_ENABLE	2
+#define	TFO_CLIENT_NO_COOKIE	4	/* Data in SYN w/o cookie option */
+
+/* Accept SYN data w/o any cookie option */
+#define	TFO_SERVER_COOKIE_NOT_REQD	0x200
+
+/* Force enable TFO on all listeners, i.e., not requiring the
+ * TCP_FASTOPEN socket option.
+ */
+#define	TFO_SERVER_WO_SOCKOPT1	0x400
 
 #endif
